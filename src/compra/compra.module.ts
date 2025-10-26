@@ -1,0 +1,22 @@
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Compra } from './compra.entity';
+import { CompraItem } from './compra-item.entity';
+import { CompraPagamento } from './compra-pagamento.entity';
+import { Estoque } from './estoque.entity';
+import { Produto } from '../produto/produto.entity';
+import { CompraService } from './compra.service';
+import { CompraController } from './compra.controller';
+import { AuthModule } from '../auth/auth.module';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([Compra, CompraItem, CompraPagamento, Estoque, Produto]),
+    AuthModule,
+  ],
+  providers: [CompraService],
+  controllers: [CompraController],
+  exports: [CompraService],
+})
+export class CompraModule {}
+
