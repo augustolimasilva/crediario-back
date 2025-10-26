@@ -24,6 +24,7 @@ import { Estoque } from './compra/estoque.entity';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: 'config.env',
+      ignoreEnvFile: process.env.NODE_ENV === 'production',
     }),
     TypeOrmModule.forRoot({
       type: 'postgres',
