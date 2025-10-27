@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Delete, Body, Param, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import { CompraService } from './compra.service';
 import { FormaPagamento } from './compra-pagamento.entity';
+import { TipoLancamento } from './lancamento-financeiro.entity';
 
 @Controller('compra')
 export class CompraController {
@@ -68,6 +69,27 @@ export class CompraController {
     return this.compraService.delete(id);
   }
 
+  @Get('lancamentos-financeiros')
+  async getLancamentosFinanceiros() {
+    return this.compraService.getLancamentosFinanceiros();
+  }
 
+  @Get('lancamentos-financeiros/compra/:compraId')
+  async getLancamentosFinanceirosPorCompra(@Param('compraId', ParseUUIDPipe) compraId: string) {
+    return this.compraService.getLancamentosFinanceirosPorCompra(compraId);
+  }
+
+  @Get('lancamentos-financeiros/periodo')
+  async getLancamentosFinanceirosPorPeriodo(
+    @Query('dataInicio') dataInicio: string,
+    @Query('dataFim') dataFim: string,
+    @Query('tipoLancamento') tipoLancamento?: TipoLancamento,
+  ) {
+    return this.compraService.getLancamentosFinanceirosPorPeriodo(
+      new Date(dataInicio),
+      new Date(dataFim),
+      tipoLancamento,
+    );
+  }
 }
 

@@ -5,6 +5,7 @@ import { Compra } from './compra.entity';
 import { CompraItem } from './compra-item.entity';
 import { CompraPagamento, FormaPagamento, StatusPagamento } from './compra-pagamento.entity';
 import { Estoque, TipoMovimentacao } from './estoque.entity';
+import { LancamentoFinanceiro, TipoLancamento } from './lancamento-financeiro.entity';
 import { Produto } from '../produto/produto.entity';
 import { User } from '../user/user.entity';
 
@@ -19,6 +20,7 @@ interface CompraPagamentoInput {
   valor: number;
   dataVencimento: Date;
   dataPagamento?: Date;
+  quantidadeParcelas?: number;
   observacao?: string;
 }
 
@@ -33,10 +35,25 @@ export class CompraService {
     private compraPagamentoRepository: Repository<CompraPagamento>,
     @InjectRepository(Estoque)
     private estoqueRepository: Repository<Estoque>,
+    @InjectRepository(LancamentoFinanceiro)
+    private lancamentoFinanceiroRepository: Repository<LancamentoFinanceiro>,
     @InjectRepository(Produto)
     private produtoRepository: Repository<Produto>,
     private dataSource: DataSource,
   ) {}
+
+  private gerarDatasParcelas(dataVencimento: Date, quantidadeParcelas: number): Date[] {
+    const datas: Date[] = [];
+    const dataBase = new Date(dataVencimento);
+    
+    for (let i = 0; i < quantidadeParcelas; i++) {
+      const dataParcela = new Date(dataBase);
+      dataParcela.setMonth(dataParcela.getMonth() + i);
+      datas.push(dataParcela);
+    }
+    
+    return datas;
+  }
 
   async findAll(): Promise<Compra[]> {
     return this.compraRepository.find({
@@ -152,22 +169,74 @@ export class CompraService {
         await manager.save(Estoque, estoque);
       }
 
-      // Criar os pagamentos da compra
+      // Criar os pagamentos da compra e lançamentos financeiros
       for (const pagamentoData of compraData.pagamentos) {
         const status = pagamentoData.dataPagamento 
           ? StatusPagamento.PAGO 
           : StatusPagamento.PENDENTE;
 
-        const pagamento = manager.create(CompraPagamento, {
-          compraId: compraSalva.id,
-          formaPagamento: pagamentoData.formaPagamento,
-          valor: pagamentoData.valor,
-          dataVencimento: pagamentoData.dataVencimento,
-          dataPagamento: pagamentoData.dataPagamento,
-          status,
-          observacao: pagamentoData.observacao,
-        });
-        await manager.save(CompraPagamento, pagamento);
+        // Se for cartão de crédito com parcelas, criar um pagamento principal
+        if (pagamentoData.formaPagamento === FormaPagamento.CARTAO_CREDITO && pagamentoData.quantidadeParcelas && pagamentoData.quantidadeParcelas > 1) {
+          const valorParcela = pagamentoData.valor / pagamentoData.quantidadeParcelas;
+          const datasParcelas = this.gerarDatasParcelas(pagamentoData.dataVencimento, pagamentoData.quantidadeParcelas);
+          
+          // Criar pagamento principal (só para referência)
+          const pagamento = manager.create(CompraPagamento, {
+            compraId: compraSalva.id,
+            formaPagamento: pagamentoData.formaPagamento,
+            valor: pagamentoData.valor,
+            dataVencimento: pagamentoData.dataVencimento,
+            dataPagamento: pagamentoData.dataPagamento,
+            status,
+            observacao: `${pagamentoData.observacao || ''} - ${pagamentoData.quantidadeParcelas}x parcelas`.trim(),
+          });
+          await manager.save(CompraPagamento, pagamento);
+
+          // Criar lançamentos financeiros para cada parcela
+          for (let i = 0; i < pagamentoData.quantidadeParcelas; i++) {
+            const dataVencimentoParcela = datasParcelas[i];
+            const dataPagamentoParcela = pagamentoData.dataPagamento && i === 0 ? pagamentoData.dataPagamento : undefined;
+            
+            const lancamento = manager.create(LancamentoFinanceiro, {
+              tipoLancamento: TipoLancamento.DEBITO,
+              valor: valorParcela,
+              dataLancamento: compraData.dataCompra,
+              dataVencimento: dataVencimentoParcela,
+              dataPagamento: dataPagamentoParcela,
+              formaPagamento: pagamentoData.formaPagamento,
+              compraId: compraSalva.id,
+              usuarioId: compraData.usuarioId,
+              observacao: `Compra - ${compraData.nomeFornecedor} - ${pagamentoData.formaPagamento} - Parcela ${i + 1}/${pagamentoData.quantidadeParcelas}`,
+            });
+            await manager.save(LancamentoFinanceiro, lancamento);
+          }
+        } else {
+          // Pagamento único (à vista ou cartão sem parcelas)
+          const pagamento = manager.create(CompraPagamento, {
+            compraId: compraSalva.id,
+            formaPagamento: pagamentoData.formaPagamento,
+            valor: pagamentoData.valor,
+            dataVencimento: pagamentoData.dataVencimento,
+            dataPagamento: pagamentoData.dataPagamento,
+            status,
+            observacao: pagamentoData.observacao,
+          });
+          await manager.save(CompraPagamento, pagamento);
+
+          // Criar lançamento financeiro para o pagamento
+          const lancamento = manager.create(LancamentoFinanceiro, {
+            tipoLancamento: TipoLancamento.DEBITO,
+            valor: pagamentoData.valor,
+            dataLancamento: compraData.dataCompra,
+            dataVencimento: pagamentoData.dataVencimento,
+            dataPagamento: pagamentoData.dataPagamento,
+            formaPagamento: pagamentoData.formaPagamento,
+            compraId: compraSalva.id,
+            usuarioId: compraData.usuarioId,
+            observacao: `Compra - ${compraData.nomeFornecedor} - ${pagamentoData.formaPagamento}`,
+          });
+          await manager.save(LancamentoFinanceiro, lancamento);
+        }
       }
 
       // Buscar e retornar a compra completa
@@ -194,6 +263,9 @@ export class CompraService {
 
       // Deletar os registros de estoque relacionados
       await manager.delete(Estoque, { compraId: id });
+
+      // Deletar os lançamentos financeiros relacionados
+      await manager.delete(LancamentoFinanceiro, { compraId: id });
 
       // Deletar a compra (os itens serão deletados automaticamente devido ao cascade)
       await manager.delete(Compra, { id });
@@ -257,6 +329,43 @@ export class CompraService {
       quantidadeTotal,
       movimentacoes,
     };
+  }
+
+  async getLancamentosFinanceiros(): Promise<LancamentoFinanceiro[]> {
+    return this.lancamentoFinanceiroRepository.find({
+      relations: ['compra', 'funcionario', 'usuario'],
+      order: { dataLancamento: 'DESC' },
+    });
+  }
+
+  async getLancamentosFinanceirosPorCompra(compraId: string): Promise<LancamentoFinanceiro[]> {
+    return this.lancamentoFinanceiroRepository.find({
+      where: { compraId },
+      relations: ['compra', 'funcionario', 'usuario'],
+      order: { dataLancamento: 'DESC' },
+    });
+  }
+
+  async getLancamentosFinanceirosPorPeriodo(
+    dataInicio: Date,
+    dataFim: Date,
+    tipoLancamento?: TipoLancamento
+  ): Promise<LancamentoFinanceiro[]> {
+    const query = this.lancamentoFinanceiroRepository
+      .createQueryBuilder('lancamento')
+      .leftJoinAndSelect('lancamento.compra', 'compra')
+      .leftJoinAndSelect('lancamento.funcionario', 'funcionario')
+      .leftJoinAndSelect('lancamento.usuario', 'usuario')
+      .where('lancamento.dataLancamento BETWEEN :dataInicio AND :dataFim', {
+        dataInicio,
+        dataFim,
+      });
+
+    if (tipoLancamento) {
+      query.andWhere('lancamento.tipoLancamento = :tipoLancamento', { tipoLancamento });
+    }
+
+    return query.orderBy('lancamento.dataLancamento', 'DESC').getMany();
   }
 }
 

@@ -26,6 +26,9 @@ export class Estoque {
   @Column({ type: 'int', generated: 'increment', unique: true })
   numeroEstoque: number;
 
+  @Column({ type: 'int', generated: 'increment', unique: true })
+  numeroLote: number;
+
   @ManyToOne(() => Produto, { eager: true })
   @JoinColumn({ name: 'produtoId' })
   produto: Produto;
