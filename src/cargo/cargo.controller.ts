@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import { CargoService } from './cargo.service';
 import { Cargo } from './cargo.entity';
 
@@ -7,8 +7,11 @@ export class CargoController {
   constructor(private cargoService: CargoService) {}
 
   @Get()
-  async getAllCargos() {
-    return this.cargoService.findAll();
+  async getAllCargos(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.cargoService.findAll(Number(page) || 1, Number(pageSize) || 20);
   }
 
   @Get(':id')

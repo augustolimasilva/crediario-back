@@ -10,8 +10,8 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-  async validateUser(email: string, password: string): Promise<any> {
-    const user = await this.userService.findByEmail(email);
+  async validateUser(usuario: string, password: string): Promise<any> {
+    const user = await this.userService.findByUsuario(usuario);
     if (user && user.password && await this.userService.validatePassword(password, user.password)) {
       const { password, ...result } = user;
       return result;
@@ -21,20 +21,20 @@ export class AuthService {
 
 
   async login(user: any) {
-    const payload = { email: user.email, sub: user.id };
+    const payload = { usuario: user.usuario, sub: user.id };
     return {
       access_token: this.jwtService.sign(payload),
       user: {
         id: user.id,
-        email: user.email,
+        usuario: user.usuario,
         name: user.name,
         avatar: user.avatar,
       },
     };
   }
 
-  async register(userData: { email: string; name: string; password: string }) {
-    const existingUser = await this.userService.findByEmail(userData.email);
+  async register(userData: { usuario: string; name: string; password: string }) {
+    const existingUser = await this.userService.findByUsuario(userData.usuario);
     
     if (existingUser) {
       throw new Error('User already exists');

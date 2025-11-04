@@ -1,10 +1,12 @@
-import { Controller, Get, Post, Delete, Body, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, ParseUUIDPipe, Query, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { CompraService } from './compra.service';
 import { FormaPagamento } from './compra-pagamento.entity';
 import { TipoLancamento } from './lancamento-financeiro.entity';
 
 @Controller('compra')
 export class CompraController {
+  private readonly logger = new Logger(CompraController.name);
+  
   constructor(private compraService: CompraService) {}
 
   @Get('estoque/todos')
@@ -18,8 +20,11 @@ export class CompraController {
   }
 
   @Get()
-  async getAllCompras() {
-    return this.compraService.findAll();
+  async getAllCompras(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.compraService.findAll(Number(page) || 1, Number(pageSize) || 20);
   }
 
   @Get(':id')
@@ -34,6 +39,7 @@ export class CompraController {
       dataCompra: string;
       usuarioId: string;
       observacao?: string;
+      desconto?: number;
       itens: Array<{
         produtoId: string;
         quantidade: number;
@@ -45,23 +51,32 @@ export class CompraController {
         dataVencimento: string;
         dataPagamento?: string;
         observacao?: string;
+        quantidadeParcelas?: number;
       }>;
     },
   ) {
-    return this.compraService.create({
-      nomeFornecedor: compraData.nomeFornecedor,
-      dataCompra: new Date(compraData.dataCompra),
-      usuarioId: compraData.usuarioId,
-      observacao: compraData.observacao,
-      itens: compraData.itens,
-      pagamentos: compraData.pagamentos.map(pag => ({
-        formaPagamento: pag.formaPagamento,
-        valor: pag.valor,
-        dataVencimento: new Date(pag.dataVencimento),
-        dataPagamento: pag.dataPagamento ? new Date(pag.dataPagamento) : undefined,
-        observacao: pag.observacao,
-      })),
-    });
+    try {
+      return await this.compraService.create({
+        nomeFornecedor: compraData.nomeFornecedor,
+        dataCompra: new Date(compraData.dataCompra),
+        usuarioId: compraData.usuarioId,
+        observacao: compraData.observacao,
+        desconto: compraData.desconto || 0,
+        itens: compraData.itens,
+        pagamentos: compraData.pagamentos.map(pag => ({
+          formaPagamento: pag.formaPagamento,
+          valor: pag.valor,
+          dataVencimento: new Date(pag.dataVencimento),
+          dataPagamento: pag.dataPagamento ? new Date(pag.dataPagamento) : undefined,
+          observacao: pag.observacao,
+          quantidadeParcelas: pag.quantidadeParcelas,
+        })),
+      });
+    } catch (error) {
+      this.logger.error(`Erro ao criar compra: ${error.message}`, error.stack);
+      // Re-throw para manter os erros específicos (BadRequestException, NotFoundException)
+      throw error;
+    }
   }
 
   @Delete(':id')

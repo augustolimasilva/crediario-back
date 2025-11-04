@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { Compra } from './compra.entity';
 import { User } from '../user/user.entity';
+import { Funcionario } from '../funcionario/funcionario.entity';
 
 export enum TipoLancamento {
   DEBITO = 'DEBITO',
@@ -67,9 +68,9 @@ export class LancamentoFinanceiro {
   @Column({ nullable: true })
   vendaId?: string;
 
-  @ManyToOne(() => User, { nullable: true })
+  @ManyToOne(() => Funcionario, { nullable: true })
   @JoinColumn({ name: 'funcionarioId' })
-  funcionario?: User;
+  funcionario?: Funcionario;
 
   @Column({ nullable: true })
   funcionarioId?: string;

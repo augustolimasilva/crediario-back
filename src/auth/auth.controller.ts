@@ -25,7 +25,7 @@ export class AuthController {
   }
 
   @Post('register')
-  async register(@Body() registerDto: { email: string; name: string; password: string }) {
+  async register(@Body() registerDto: { usuario: string; name: string; password: string }) {
     try {
       return await this.authService.register(registerDto);
     } catch (error) {

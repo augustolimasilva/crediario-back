@@ -6,6 +6,13 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+export enum ClassificacaoProduto {
+  PRODUTO_ESTOQUE = 'PRODUTO_ESTOQUE',
+  ATIVO_IMOBILIZADO = 'ATIVO_IMOBILIZADO',
+  SERVICO = 'SERVICO',
+  MATERIAL_CONSUMO = 'MATERIAL_CONSUMO',
+}
+
 @Entity('produtos')
 export class Produto {
   @PrimaryGeneratedColumn('uuid')
@@ -25,7 +32,23 @@ export class Produto {
 
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
-  valorVenda: number;
+  valor: number;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  precoMedio: number;
+
+  @Column({ type: 'decimal', precision: 5, scale: 2, default: 0 })
+  percentualComissao: number;
+
+  @Column({
+    type: 'enum',
+    enum: ClassificacaoProduto,
+    default: ClassificacaoProduto.PRODUTO_ESTOQUE,
+  })
+  classificacao: ClassificacaoProduto;
+
+  @Column({ default: false })
+  temEstoque: boolean;
 
   @Column({ type: 'int', default: 0 })
   quantidadeMinimaEstoque: number;

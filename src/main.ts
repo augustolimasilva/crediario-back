@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { LoggingInterceptor } from './logging.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -23,15 +24,17 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
   });
   
+  // Enable logging interceptor
+  app.useGlobalInterceptors(new LoggingInterceptor());
+
   // Enable validation pipes
   app.useGlobalPipes(new ValidationPipe({
     transform: true,
     whitelist: true,
+    forbidNonWhitelisted: false, // Não falhar se houver propriedades não whitelisted
   }));
   
   const port = process.env.PORT || 3001;
   await app.listen(port, '0.0.0.0'); // Listen on all interfaces
-  console.log(`🚀 Application is running on: http://0.0.0.0:${port}`);
-  console.log(`✅ CORS enabled for: ${allowedOrigins.join(', ')}`);
 }
 bootstrap();

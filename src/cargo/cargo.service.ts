@@ -10,10 +10,15 @@ export class CargoService {
     private cargoRepository: Repository<Cargo>,
   ) {}
 
-  async findAll(): Promise<Cargo[]> {
-    return this.cargoRepository.find({
-      order: { descricao: 'ASC' }
+  async findAll(page: number = 1, pageSize: number = 20): Promise<{ data: Cargo[]; total: number; page: number; pageSize: number }> {
+    const take = Math.max(1, Math.min(pageSize, 200));
+    const skip = Math.max(0, (Math.max(1, page) - 1) * take);
+    const [data, total] = await this.cargoRepository.findAndCount({
+      order: { descricao: 'ASC' },
+      skip,
+      take,
     });
+    return { data, total, page: Math.max(1, page), pageSize: take };
   }
 
   async findById(id: string): Promise<Cargo | null> {

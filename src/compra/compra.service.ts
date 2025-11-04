@@ -8,6 +8,8 @@ import { Estoque, TipoMovimentacao } from './estoque.entity';
 import { LancamentoFinanceiro, TipoLancamento } from './lancamento-financeiro.entity';
 import { Produto } from '../produto/produto.entity';
 import { User } from '../user/user.entity';
+import { ProdutoHistoricoService } from '../produto/produto-historico.service';
+import { TipoAlteracao } from '../produto/produto-historico.entity';
 
 interface CompraItemInput {
   produtoId: string;
@@ -40,33 +42,71 @@ export class CompraService {
     @InjectRepository(Produto)
     private produtoRepository: Repository<Produto>,
     private dataSource: DataSource,
+    private readonly produtoHistoricoService: ProdutoHistoricoService,
   ) {}
 
   private gerarDatasParcelas(dataVencimento: Date, quantidadeParcelas: number): Date[] {
     const datas: Date[] = [];
     const dataBase = new Date(dataVencimento);
     
+    // Armazenar o dia original para manter consistência
+    const diaOriginal = dataBase.getDate();
+    
     for (let i = 0; i < quantidadeParcelas; i++) {
-      const dataParcela = new Date(dataBase);
-      dataParcela.setMonth(dataParcela.getMonth() + i);
+      const ano = dataBase.getFullYear();
+      const mes = dataBase.getMonth() + i;
+      
+      // Calcular o ano e mês corretos (lidar com overflow de meses)
+      const anoFinal = ano + Math.floor(mes / 12);
+      const mesFinal = mes % 12;
+      
+      // Criar data com o primeiro dia do mês
+      const dataParcela = new Date(anoFinal, mesFinal, 1);
+      
+      // Obter o último dia do mês
+      const ultimoDiaDoMes = new Date(anoFinal, mesFinal + 1, 0).getDate();
+      
+      // Usar o dia original ou o último dia do mês, o que for menor
+      const diaFinal = Math.min(diaOriginal, ultimoDiaDoMes);
+      dataParcela.setDate(diaFinal);
+      
       datas.push(dataParcela);
     }
     
     return datas;
   }
 
-  async findAll(): Promise<Compra[]> {
-    return this.compraRepository.find({
+  async findAll(page: number = 1, pageSize: number = 20): Promise<{ data: Compra[]; total: number; page: number; pageSize: number }> {
+    const take = Math.max(1, Math.min(pageSize, 200));
+    const skip = Math.max(0, (Math.max(1, page) - 1) * take);
+
+    const [data, total] = await this.compraRepository.findAndCount({
       relations: ['itens', 'itens.produto', 'usuario', 'pagamentos'],
       order: { dataCompra: 'DESC' },
+      skip,
+      take,
     });
+
+    return { data, total, page: Math.max(1, page), pageSize: take };
   }
 
   async findById(id: string): Promise<Compra | null> {
-    return this.compraRepository.findOne({
+    const compra = await this.compraRepository.findOne({
       where: { id },
       relations: ['itens', 'itens.produto', 'usuario', 'pagamentos'],
     });
+
+    if (!compra) {
+      return null;
+    }
+
+    const lancamentos = await this.lancamentoFinanceiroRepository.find({
+      where: { compraId: id },
+      order: { dataLancamento: 'DESC' },
+    });
+
+    (compra as any).lancamentosFinanceiros = lancamentos;
+    return compra;
   }
 
   async create(compraData: {
@@ -74,6 +114,7 @@ export class CompraService {
     dataCompra: Date;
     usuarioId: string;
     observacao?: string;
+    desconto?: number;
     itens: CompraItemInput[];
     pagamentos: CompraPagamentoInput[];
   }): Promise<Compra> {
@@ -123,23 +164,30 @@ export class CompraService {
         });
       }
 
+      // Calcular desconto (default 0)
+      const desconto = Number(compraData.desconto || 0);
+      
+      // Calcular valor total após desconto
+      const valorTotal = Math.max(0, valorTotalItens - desconto);
+
       // Calcular valor total dos pagamentos
       const valorTotalPagamentos = compraData.pagamentos.reduce(
         (total, pag) => total + Number(pag.valor),
         0
       );
 
-      // Validar se o valor dos pagamentos é igual ao valor dos itens
-      if (Math.abs(valorTotalPagamentos - valorTotalItens) > 0.01) {
+      // Validar se o valor dos pagamentos é igual ao valor total (após desconto)
+      if (Math.abs(valorTotalPagamentos - valorTotal) > 0.01) {
         throw new BadRequestException(
-          `O valor total dos pagamentos (R$ ${valorTotalPagamentos.toFixed(2)}) deve ser igual ao valor total da compra (R$ ${valorTotalItens.toFixed(2)})`
+          `O valor total dos pagamentos (R$ ${valorTotalPagamentos.toFixed(2)}) deve ser igual ao valor total da compra (R$ ${valorTotal.toFixed(2)})`
         );
       }
 
       // Criar a compra
       const compra = manager.create(Compra, {
         nomeFornecedor: compraData.nomeFornecedor,
-        valorTotal: valorTotalItens,
+        valorTotal,
+        desconto,
         dataCompra: compraData.dataCompra,
         usuarioId: compraData.usuarioId,
         observacao: compraData.observacao,
@@ -149,6 +197,50 @@ export class CompraService {
 
       // Criar os itens da compra
       for (const itemData of itensProcessados) {
+        // Buscar produto atual para possível cálculo de custo médio ponderado
+        const produtoAtual = await manager.findOne(Produto, { where: { id: itemData.produtoId } });
+
+        // Calcular e atualizar preço médio apenas se o produto tiver controle de estoque ativo
+        if (produtoAtual?.temEstoque) {
+          // Quantidade atual em estoque (antes desta entrada)
+          const quantidadeSaldoRow = await manager
+            .createQueryBuilder(Estoque, 'e')
+            .select(
+              "COALESCE(SUM(CASE WHEN e.tipoMovimentacao = :entrada THEN e.quantidade ELSE 0 END), 0)",
+            )
+            .addSelect(
+              "COALESCE(SUM(CASE WHEN e.tipoMovimentacao = :saida THEN e.quantidade ELSE 0 END), 0)",
+            )
+            .where('e.produtoId = :produtoId', { produtoId: itemData.produtoId })
+            .setParameters({ entrada: TipoMovimentacao.ENTRADA, saida: TipoMovimentacao.SAIDA })
+            .getRawOne<{ coalesce: number; coalesce_1: number }>();
+
+          const entradas = Number(quantidadeSaldoRow?.coalesce || 0);
+          const saídas = Number((quantidadeSaldoRow as any)?.coalesce_1 || 0);
+          const quantidadeAtual = entradas - saídas;
+
+          const precoMedioAtual = Number(produtoAtual.precoMedio || 0);
+
+          const quantidadeNova = quantidadeAtual + itemData.quantidade;
+          const precoMedioNovo = quantidadeNova > 0
+            ? ((precoMedioAtual * quantidadeAtual) + (itemData.valorUnitario * itemData.quantidade)) / quantidadeNova
+            : Number(itemData.valorUnitario);
+
+          const precoAnterior = produtoAtual.precoMedio;
+          produtoAtual.precoMedio = Number(precoMedioNovo.toFixed(2));
+          await manager.save(Produto, produtoAtual);
+
+          // Registrar no histórico do produto
+          await this.produtoHistoricoService.registrarAlteracao(
+            produtoAtual.id,
+            compraData.usuarioId,
+            TipoAlteracao.ATUALIZADO,
+            { precoMedio: precoAnterior },
+            { precoMedio: produtoAtual.precoMedio },
+            `Atualização de preço médio via compra (${compraSalva.id})`,
+          );
+        }
+
         const item = manager.create(CompraItem, {
           compraId: compraSalva.id,
           ...itemData,
@@ -167,13 +259,30 @@ export class CompraService {
           observacao: `Entrada via compra - Fornecedor: ${compraData.nomeFornecedor}`,
         });
         await manager.save(Estoque, estoque);
+
+        // Observação: quando o produto não tem controle de estoque, não atualizamos preço médio
       }
 
       // Criar os pagamentos da compra e lançamentos financeiros
+      const dataAtual = new Date();
+      dataAtual.setHours(0, 0, 0, 0); // Zerar horas para comparação apenas de data
+
       for (const pagamentoData of compraData.pagamentos) {
-        const status = pagamentoData.dataPagamento 
-          ? StatusPagamento.PAGO 
-          : StatusPagamento.PENDENTE;
+        // Verificar se a data de pagamento é futura
+        let dataPagamentoEfetiva: Date | undefined = undefined;
+        let status = StatusPagamento.PENDENTE;
+
+        if (pagamentoData.dataPagamento) {
+          const dataPagamento = new Date(pagamentoData.dataPagamento);
+          dataPagamento.setHours(0, 0, 0, 0);
+
+          // Se a data de pagamento for hoje ou no passado, considerar como pago
+          if (dataPagamento <= dataAtual) {
+            dataPagamentoEfetiva = pagamentoData.dataPagamento;
+            status = StatusPagamento.PAGO;
+          }
+          // Se for futura, deixar como pendente (sem data de pagamento)
+        }
 
         // Se for cartão de crédito com parcelas, criar um pagamento principal
         if (pagamentoData.formaPagamento === FormaPagamento.CARTAO_CREDITO && pagamentoData.quantidadeParcelas && pagamentoData.quantidadeParcelas > 1) {
@@ -186,7 +295,7 @@ export class CompraService {
             formaPagamento: pagamentoData.formaPagamento,
             valor: pagamentoData.valor,
             dataVencimento: pagamentoData.dataVencimento,
-            dataPagamento: pagamentoData.dataPagamento,
+            dataPagamento: dataPagamentoEfetiva,
             status,
             observacao: `${pagamentoData.observacao || ''} - ${pagamentoData.quantidadeParcelas}x parcelas`.trim(),
           });
@@ -195,7 +304,12 @@ export class CompraService {
           // Criar lançamentos financeiros para cada parcela
           for (let i = 0; i < pagamentoData.quantidadeParcelas; i++) {
             const dataVencimentoParcela = datasParcelas[i];
-            const dataPagamentoParcela = pagamentoData.dataPagamento && i === 0 ? pagamentoData.dataPagamento : undefined;
+            
+            // Para parcelas, apenas a primeira pode ter sido paga se a data for atual/passada
+            let dataPagamentoParcela: Date | undefined = undefined;
+            if (i === 0 && dataPagamentoEfetiva) {
+              dataPagamentoParcela = dataPagamentoEfetiva;
+            }
             
             const lancamento = manager.create(LancamentoFinanceiro, {
               tipoLancamento: TipoLancamento.DEBITO,
@@ -217,19 +331,20 @@ export class CompraService {
             formaPagamento: pagamentoData.formaPagamento,
             valor: pagamentoData.valor,
             dataVencimento: pagamentoData.dataVencimento,
-            dataPagamento: pagamentoData.dataPagamento,
+            dataPagamento: dataPagamentoEfetiva,
             status,
             observacao: pagamentoData.observacao,
           });
           await manager.save(CompraPagamento, pagamento);
 
           // Criar lançamento financeiro para o pagamento
+          // Se a data de pagamento for futura ou não informada, criar como pendente (sem dataPagamento)
           const lancamento = manager.create(LancamentoFinanceiro, {
             tipoLancamento: TipoLancamento.DEBITO,
             valor: pagamentoData.valor,
             dataLancamento: compraData.dataCompra,
             dataVencimento: pagamentoData.dataVencimento,
-            dataPagamento: pagamentoData.dataPagamento,
+            dataPagamento: dataPagamentoEfetiva,
             formaPagamento: pagamentoData.formaPagamento,
             compraId: compraSalva.id,
             usuarioId: compraData.usuarioId,

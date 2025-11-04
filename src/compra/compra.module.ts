@@ -9,11 +9,13 @@ import { Produto } from '../produto/produto.entity';
 import { CompraService } from './compra.service';
 import { CompraController } from './compra.controller';
 import { AuthModule } from '../auth/auth.module';
+import { ProdutoModule } from '../produto/produto.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Compra, CompraItem, CompraPagamento, Estoque, LancamentoFinanceiro, Produto]),
     AuthModule,
+    ProdutoModule,
   ],
   providers: [CompraService],
   controllers: [CompraController],

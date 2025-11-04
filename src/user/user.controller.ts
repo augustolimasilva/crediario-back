@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, UseGuards, Request, Body, Param, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, UseGuards, Request, Body, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import { UserService } from './user.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { User } from './user.entity';
@@ -14,8 +14,11 @@ export class UserController {
   }
 
   @Get()
-  async getAllUsers() {
-    return this.userService.findAll();
+  async getAllUsers(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.userService.findAll(Number(page) || 1, Number(pageSize) || 20);
   }
 
   @Get(':id')
@@ -24,14 +27,14 @@ export class UserController {
   }
 
   @Post()
-  async createUser(@Body() userData: { name: string; email: string; password: string }) {
+  async createUser(@Body() userData: { name: string; usuario: string; password: string }) {
     return this.userService.createUser(userData);
   }
 
   @Put(':id')
   async updateUser(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() updateData: { name?: string; email?: string; password?: string; isActive?: boolean }
+    @Body() updateData: { name?: string; usuario?: string; password?: string; isActive?: boolean }
   ) {
     return this.userService.updateUser(id, updateData);
   }

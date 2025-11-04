@@ -11,8 +11,8 @@ export class UserService {
     private userRepository: Repository<User>,
   ) {}
 
-  async findByEmail(email: string): Promise<User | null> {
-    return this.userRepository.findOne({ where: { email } });
+  async findByUsuario(usuario: string): Promise<User | null> {
+    return this.userRepository.findOne({ where: { usuario } });
   }
 
 
@@ -21,7 +21,7 @@ export class UserService {
   }
 
   async createUser(userData: {
-    email: string;
+    usuario: string;
     name: string;
     password?: string;
     avatar?: string;
@@ -48,10 +48,16 @@ export class UserService {
     return bcrypt.compare(password, hashedPassword);
   }
 
-  async findAll(): Promise<User[]> {
-    return this.userRepository.find({
-      select: ['id', 'name', 'email', 'isActive', 'createdAt', 'updatedAt']
+  async findAll(page: number = 1, pageSize: number = 20): Promise<{ data: Partial<User>[]; total: number; page: number; pageSize: number }> {
+    const take = Math.max(1, Math.min(pageSize, 200));
+    const skip = Math.max(0, (Math.max(1, page) - 1) * take);
+    const [users, total] = await this.userRepository.findAndCount({
+      select: ['id', 'name', 'usuario', 'isActive', 'createdAt', 'updatedAt'],
+      order: { name: 'ASC' },
+      skip,
+      take,
     });
+    return { data: users, total, page: Math.max(1, page), pageSize: take };
   }
 
   async deleteUser(id: string): Promise<void> {

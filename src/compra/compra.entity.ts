@@ -26,6 +26,9 @@ export class Compra {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   valorTotal: number;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, nullable: true })
+  desconto?: number;
+
   @ManyToOne(() => User)
   @JoinColumn({ name: 'usuarioId' })
   usuario: User;

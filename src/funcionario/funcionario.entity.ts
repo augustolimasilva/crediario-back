@@ -58,6 +58,9 @@ export class Funcionario {
   @Column({ type: 'decimal', precision: 5, scale: 2, default: 0, nullable: true })
   comissao?: number;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  salario?: number;
+
   @CreateDateColumn()
   createdAt: Date;
 
