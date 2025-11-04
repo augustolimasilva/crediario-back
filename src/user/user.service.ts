@@ -36,7 +36,13 @@ export class UserService {
   }
 
   async updateUser(id: string, updateData: Partial<User>): Promise<User> {
-    await this.userRepository.update(id, updateData);
+    // Se houver senha, criptografar antes de salvar
+    const dataToUpdate = { ...updateData };
+    if (dataToUpdate.password) {
+      dataToUpdate.password = await bcrypt.hash(dataToUpdate.password, 10);
+    }
+    
+    await this.userRepository.update(id, dataToUpdate);
     const user = await this.findById(id);
     if (!user) {
       throw new Error('User not found');
