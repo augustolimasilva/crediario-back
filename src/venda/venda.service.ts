@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, Between } from 'typeorm';
+import { DataSource, Repository, Between, In } from 'typeorm';
 import { Venda } from './venda.entity';
 import { VendaItem } from './venda-item.entity';
 import { VendaPagamento } from './venda-pagamento.entity';
@@ -75,7 +75,7 @@ export class VendaService {
     pageSize = 20,
     filters?: {
       nomeCliente?: string;
-      vendedorId?: string;
+      numeroVenda?: string;
       dataInicio?: string;
       dataFim?: string;
     }
@@ -97,9 +97,9 @@ export class VendaService {
       });
     }
 
-    if (filters?.vendedorId) {
-      queryBuilder.andWhere('venda.vendedorId = :vendedorId', {
-        vendedorId: filters.vendedorId,
+    if (filters?.numeroVenda) {
+      queryBuilder.andWhere('venda.id::text ILIKE :numeroVenda', {
+        numeroVenda: `%${filters.numeroVenda}%`,
       });
     }
 
@@ -180,10 +180,15 @@ export class VendaService {
     vendasSemana: { quantidade: number; valor: number };
     vendasMes: { quantidade: number; valor: number };
     receitaMes: number;
+    totalDespesasMes: number;
+    saldoMes: number;
     produtosEstoqueBaixo: Array<{ id: string; nome: string; quantidadeEstoque: number; quantidadeMinimaEstoque: number }>;
     rankingVendedoresValor: Array<{ funcionarioId: string; funcionarioNome: string; valorTotal: number }>;
     rankingVendedoresQuantidade: Array<{ funcionarioId: string; funcionarioNome: string; quantidade: number }>;
     rankingProdutos: Array<{ produtoId: string; produtoNome: string; quantidade: number }>;
+    valorEstoqueAtual: number;
+    pagamentosDiaNaoRealizados: number;
+    recebimentosDiaNaoRecebidos: number;
   }> {
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
@@ -237,18 +242,25 @@ export class VendaService {
     // Receita do mês (lançamentos financeiros de crédito do mês)
     const lancamentosMes = await this.lancamentoFinanceiroRepository.find({
       where: {
-        tipoLancamento: TipoLancamento.CREDITO,
         dataLancamento: Between(inicioMes, fimMes),
       },
     });
-    const receitaMes = lancamentosMes.reduce((sum, l) => sum + Number(l.valor), 0);
+    const receitaMes = lancamentosMes
+      .filter(l => l.tipoLancamento === TipoLancamento.CREDITO)
+      .reduce((sum, l) => sum + Number(l.valor), 0);
+    
+    // Calcular saldo do mês (receitas - despesas)
+    const totalDespesasMes = lancamentosMes
+      .filter(l => l.tipoLancamento === TipoLancamento.DEBITO)
+      .reduce((sum, l) => sum + Number(l.valor), 0);
+    const saldoMes = receitaMes - totalDespesasMes;
 
     // Produtos com estoque baixo
-    const produtosComEstoque = await this.produtoRepository.find({
+    const produtosComEstoqueBaixo = await this.produtoRepository.find({
       where: { temEstoque: true },
     });
     const produtosEstoqueBaixo: Array<{ id: string; nome: string; quantidadeEstoque: number; quantidadeMinimaEstoque: number }> = [];
-    for (const produto of produtosComEstoque) {
+    for (const produto of produtosComEstoqueBaixo) {
       const estoque = await this.estoqueRepository
         .createQueryBuilder('estoque')
         .select('COALESCE(SUM(CASE WHEN estoque.tipoMovimentacao = :entrada THEN estoque.quantidade ELSE -estoque.quantidade END), 0)', 'total')
@@ -329,6 +341,87 @@ export class VendaService {
       .sort((a, b) => b.quantidade - a.quantidade)
       .slice(0, 10);
 
+    // Calcular valor atual do estoque
+    // Primeiro, buscar apenas produtos que têm controle de estoque
+    const produtosComEstoque = await this.produtoRepository.find({
+      where: { temEstoque: true },
+      select: ['id', 'valor'],
+    });
+    const produtosComEstoqueIds = produtosComEstoque.map(p => p.id);
+    
+    let valorEstoqueAtual = 0;
+    
+    if (produtosComEstoqueIds.length > 0) {
+      // Buscar estoques apenas dos produtos com controle de estoque
+      const todosEstoques = await this.estoqueRepository.find({
+        relations: ['produto'],
+        where: {
+          produtoId: In(produtosComEstoqueIds),
+        },
+      });
+      
+      // Criar mapa de produtos com valor
+      const produtosMap = new Map<string, number>();
+      for (const produto of produtosComEstoque) {
+        produtosMap.set(produto.id, Number(produto.valor) || 0);
+      }
+      
+      const saldoPorProduto = new Map<string, { quantidade: number }>();
+      
+      // Inicializar saldo apenas para produtos com controle de estoque
+      for (const produtoId of produtosComEstoqueIds) {
+        saldoPorProduto.set(produtoId, { quantidade: 0 });
+      }
+      
+      for (const estoque of todosEstoques) {
+        // Verificar se o produto tem controle de estoque
+        if (!produtosComEstoqueIds.includes(estoque.produtoId)) {
+          continue; // Pular produtos sem controle de estoque
+        }
+        
+        if (!saldoPorProduto.has(estoque.produtoId)) {
+          saldoPorProduto.set(estoque.produtoId, { quantidade: 0 });
+        }
+        const saldo = saldoPorProduto.get(estoque.produtoId);
+        if (saldo) {
+          if (estoque.tipoMovimentacao === TipoMovimentacao.ENTRADA) {
+            saldo.quantidade += estoque.quantidade || 0;
+          } else if (estoque.tipoMovimentacao === TipoMovimentacao.SAIDA) {
+            saldo.quantidade -= estoque.quantidade || 0;
+          }
+        }
+      }
+      
+      // Calcular valor considerando estoques positivos e negativos (apenas produtos com controle de estoque)
+      for (const [produtoId, saldo] of saldoPorProduto.entries()) {
+        // Considerar todos os estoques (positivos e negativos)
+        const valorUnitario = produtosMap.get(produtoId) || 0;
+        if (valorUnitario > 0) {
+          valorEstoqueAtual += saldo.quantidade * valorUnitario;
+        }
+      }
+    }
+
+    // Pagamentos do dia que não foram realizados (débitos com dataVencimento = hoje e dataPagamento = null)
+    const pagamentosDiaNaoRealizados = await this.lancamentoFinanceiroRepository.find({
+      where: {
+        tipoLancamento: TipoLancamento.DEBITO,
+        dataVencimento: Between(hoje, fimHoje),
+        dataPagamento: null as any,
+      },
+    });
+    const valorPagamentosDiaNaoRealizados = pagamentosDiaNaoRealizados.reduce((sum, l) => sum + (Number(l.valor) || 0), 0);
+
+    // Recebimentos previstos do dia que não foram recebidos (créditos com dataVencimento = hoje e dataPagamento = null)
+    const recebimentosDiaNaoRecebidos = await this.lancamentoFinanceiroRepository.find({
+      where: {
+        tipoLancamento: TipoLancamento.CREDITO,
+        dataVencimento: Between(hoje, fimHoje),
+        dataPagamento: null as any,
+      },
+    });
+    const valorRecebimentosDiaNaoRecebidos = recebimentosDiaNaoRecebidos.reduce((sum, l) => sum + (Number(l.valor) || 0), 0);
+
     return {
       vendasDia: {
         quantidade: vendasDiaStats.quantidade,
@@ -343,10 +436,15 @@ export class VendaService {
         valor: Number(vendasMesStats.valor.toFixed(2)),
       },
       receitaMes: Number(receitaMes.toFixed(2)),
+      totalDespesasMes: Number(totalDespesasMes.toFixed(2)),
+      saldoMes: Number(saldoMes.toFixed(2)),
       produtosEstoqueBaixo,
       rankingVendedoresValor,
       rankingVendedoresQuantidade,
       rankingProdutos,
+      valorEstoqueAtual: Number(valorEstoqueAtual.toFixed(2)),
+      pagamentosDiaNaoRealizados: Number(valorPagamentosDiaNaoRealizados.toFixed(2)),
+      recebimentosDiaNaoRecebidos: Number(valorRecebimentosDiaNaoRecebidos.toFixed(2)),
     };
   }
 

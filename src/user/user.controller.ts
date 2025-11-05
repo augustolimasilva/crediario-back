@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, UseGuards, Request, Body, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, UseGuards, Request, Body, Param, ParseUUIDPipe, Query, BadRequestException } from '@nestjs/common';
 import { UserService } from './user.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { User } from './user.entity';
@@ -11,6 +11,36 @@ export class UserController {
   @Get('profile')
   async getProfile(@Request() req) {
     return this.userService.findById(req.user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('profile')
+  async updateProfile(
+    @Request() req,
+    @Body() body: { name?: string; password?: string; avatar?: string },
+  ) {
+    const updateData: any = {};
+    
+    // Adicionar campos do body
+    if (body.name) {
+      updateData.name = body.name;
+    }
+    if (body.password) {
+      updateData.password = body.password;
+    }
+    
+    // Avatar já vem como base64 do frontend (data URI)
+    if (body.avatar) {
+      // Validar que é um data URI válido
+      if (!body.avatar.startsWith('data:image/')) {
+        throw new BadRequestException('Formato de imagem inválido. Deve ser um data URI base64.');
+      }
+      updateData.avatar = body.avatar;
+    }
+    
+    const updatedUser = await this.userService.updateUser(req.user.id, updateData);
+    
+    return updatedUser;
   }
 
   @Get()

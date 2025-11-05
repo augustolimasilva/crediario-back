@@ -17,7 +17,10 @@ export class UserService {
 
 
   async findById(id: string): Promise<User | null> {
-    return this.userRepository.findOne({ where: { id } });
+    return this.userRepository.findOne({ 
+      where: { id },
+      select: ['id', 'usuario', 'name', 'avatar', 'isActive', 'createdAt', 'updatedAt']
+    });
   }
 
   async createUser(userData: {
@@ -43,10 +46,12 @@ export class UserService {
     }
     
     await this.userRepository.update(id, dataToUpdate);
+    
     const user = await this.findById(id);
     if (!user) {
       throw new Error('User not found');
     }
+    
     return user;
   }
 

@@ -11,7 +11,7 @@ export class VendaController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('nomeCliente') nomeCliente?: string,
-    @Query('vendedorId') vendedorId?: string,
+    @Query('numeroVenda') numeroVenda?: string,
     @Query('dataInicio') dataInicio?: string,
     @Query('dataFim') dataFim?: string,
   ) {
@@ -20,7 +20,7 @@ export class VendaController {
       Number(pageSize) || 20,
       {
         nomeCliente: nomeCliente || undefined,
-        vendedorId: vendedorId || undefined,
+        numeroVenda: numeroVenda || undefined,
         dataInicio: dataInicio || undefined,
         dataFim: dataFim || undefined,
       }
