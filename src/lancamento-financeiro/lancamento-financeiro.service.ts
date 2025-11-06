@@ -36,7 +36,6 @@ export class LancamentoFinanceiroService {
     if (filters.dataInicio && filters.dataFim) {
       // Parse das datas garantindo que sejam interpretadas no timezone local
       // Formato esperado: "YYYY-MM-DD"
-      // Usar Date.UTC para garantir comparação consistente, depois converter para local
       const [anoInicio, mesInicio, diaInicio] = filters.dataInicio.split('-').map(Number);
       // Criar data no timezone local para início do dia
       const dataInicio = new Date(anoInicio, mesInicio - 1, diaInicio, 0, 0, 0, 0);
@@ -45,8 +44,8 @@ export class LancamentoFinanceiroService {
       // Criar data no timezone local para fim do dia
       const dataFim = new Date(anoFim, mesFim - 1, diaFim, 23, 59, 59, 999);
       
-      // Usar MoreThanOrEqual e LessThanOrEqual para ter controle total
-      where.dataLancamento = Between(dataInicio, dataFim);
+      // Filtrar por dataVencimento ao invés de dataLancamento
+      where.dataVencimento = Between(dataInicio, dataFim);
     }
 
     if (filters.funcionarioId) {
@@ -123,7 +122,8 @@ export class LancamentoFinanceiroService {
       const inicio = dataInicio instanceof Date ? dataInicio : new Date(dataInicio);
       const fim = dataFim instanceof Date ? dataFim : new Date(dataFim);
       
-      where.dataLancamento = Between(inicio, fim);
+      // Filtrar por dataVencimento ao invés de dataLancamento
+      where.dataVencimento = Between(inicio, fim);
     }
 
     const lancamentos = await this.lancamentoFinanceiroRepository.find({

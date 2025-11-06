@@ -147,7 +147,7 @@ export class VendaService {
         dataVenda: Between(dataInicioDate, dataFimDate),
       },
       relations: ['itens', 'itens.produto', 'vendedor'],
-      order: { dataVenda: 'ASC' },
+      order: { dataVenda: 'DESC' },
     });
 
     // Calcular comissão total
