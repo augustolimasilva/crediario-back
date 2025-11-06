@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Body, Param, ParseUUIDPipe, Query, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, ParseUUIDPipe, Query, HttpException, HttpStatus, Logger, BadRequestException } from '@nestjs/common';
 import { CompraService } from './compra.service';
 import { FormaPagamento } from './compra-pagamento.entity';
 import { TipoLancamento } from './lancamento-financeiro.entity';
@@ -56,21 +56,40 @@ export class CompraController {
     },
   ) {
     try {
+      // Função auxiliar para criar data a partir de string YYYY-MM-DD sem problemas de timezone
+      // Cria a data diretamente a partir dos componentes para evitar interpretação como UTC
+      const parseDate = (dateString: string): Date => {
+        if (!dateString || !dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          throw new BadRequestException(`Data inválida: ${dateString}`);
+        }
+        const [year, month, day] = dateString.split('-').map(Number);
+        // Criar data no timezone local (não UTC)
+        const date = new Date(year, month - 1, day);
+        date.setHours(0, 0, 0, 0);
+        return date;
+      };
+
+      // Normalizar dataCompra
+      const dataCompra = parseDate(compraData.dataCompra);
+
+      // Processar pagamentos
+      const pagamentosProcessados = compraData.pagamentos.map(pag => ({
+        formaPagamento: pag.formaPagamento,
+        valor: pag.valor,
+        dataVencimento: parseDate(pag.dataVencimento),
+        dataPagamento: pag.dataPagamento ? parseDate(pag.dataPagamento) : undefined,
+        observacao: pag.observacao,
+        quantidadeParcelas: pag.quantidadeParcelas,
+      }));
+
       return await this.compraService.create({
         nomeFornecedor: compraData.nomeFornecedor,
-        dataCompra: new Date(compraData.dataCompra),
+        dataCompra,
         usuarioId: compraData.usuarioId,
         observacao: compraData.observacao,
         desconto: compraData.desconto || 0,
         itens: compraData.itens,
-        pagamentos: compraData.pagamentos.map(pag => ({
-          formaPagamento: pag.formaPagamento,
-          valor: pag.valor,
-          dataVencimento: new Date(pag.dataVencimento),
-          dataPagamento: pag.dataPagamento ? new Date(pag.dataPagamento) : undefined,
-          observacao: pag.observacao,
-          quantidadeParcelas: pag.quantidadeParcelas,
-        })),
+        pagamentos: pagamentosProcessados,
       });
     } catch (error) {
       this.logger.error(`Erro ao criar compra: ${error.message}`, error.stack);

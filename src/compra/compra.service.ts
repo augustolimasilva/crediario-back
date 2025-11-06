@@ -48,6 +48,7 @@ export class CompraService {
   private gerarDatasParcelas(dataVencimento: Date, quantidadeParcelas: number): Date[] {
     const datas: Date[] = [];
     const dataBase = new Date(dataVencimento);
+    dataBase.setHours(0, 0, 0, 0); // Normalizar para meia-noite local
     
     // Armazenar o dia original para manter consistência
     const diaOriginal = dataBase.getDate();
@@ -62,6 +63,7 @@ export class CompraService {
       
       // Criar data com o primeiro dia do mês
       const dataParcela = new Date(anoFinal, mesFinal, 1);
+      dataParcela.setHours(0, 0, 0, 0);
       
       // Obter o último dia do mês
       const ultimoDiaDoMes = new Date(anoFinal, mesFinal + 1, 0).getDate();
@@ -69,6 +71,7 @@ export class CompraService {
       // Usar o dia original ou o último dia do mês, o que for menor
       const diaFinal = Math.min(diaOriginal, ultimoDiaDoMes);
       dataParcela.setDate(diaFinal);
+      dataParcela.setHours(0, 0, 0, 0); // Garantir que está normalizada
       
       datas.push(dataParcela);
     }
@@ -120,6 +123,10 @@ export class CompraService {
   }): Promise<Compra> {
     // Usar transaction para garantir consistência
     return this.dataSource.transaction(async (manager) => {
+      // Normalizar dataCompra para evitar problemas de timezone
+      const dataCompraNormalizada = new Date(compraData.dataCompra);
+      dataCompraNormalizada.setHours(0, 0, 0, 0);
+      
       // Validar se o usuário existe
       const usuario = await manager.findOne(User, {
         where: { id: compraData.usuarioId },
@@ -188,7 +195,7 @@ export class CompraService {
         nomeFornecedor: compraData.nomeFornecedor,
         valorTotal,
         desconto,
-        dataCompra: compraData.dataCompra,
+        dataCompra: dataCompraNormalizada,
         usuarioId: compraData.usuarioId,
         observacao: compraData.observacao,
       });
@@ -253,7 +260,7 @@ export class CompraService {
           quantidade: itemData.quantidade,
           tipoMovimentacao: TipoMovimentacao.ENTRADA,
           valorUnitario: itemData.valorUnitario,
-          dataMovimentacao: compraData.dataCompra,
+          dataMovimentacao: dataCompraNormalizada,
           compraId: compraSalva.id,
           usuarioId: compraData.usuarioId,
           observacao: `Entrada via compra - Fornecedor: ${compraData.nomeFornecedor}`,
@@ -267,18 +274,27 @@ export class CompraService {
       const dataAtual = new Date();
       dataAtual.setHours(0, 0, 0, 0); // Zerar horas para comparação apenas de data
 
+      // Função auxiliar para normalizar data (garantir que seja tratada como data local)
+      const normalizeDate = (date: Date): Date => {
+        const normalized = new Date(date);
+        normalized.setHours(0, 0, 0, 0);
+        return normalized;
+      };
+
       for (const pagamentoData of compraData.pagamentos) {
+        // Normalizar data de vencimento
+        const dataVencimentoNormalizada = normalizeDate(pagamentoData.dataVencimento);
+        
         // Verificar se a data de pagamento é futura
         let dataPagamentoEfetiva: Date | undefined = undefined;
         let status = StatusPagamento.PENDENTE;
 
         if (pagamentoData.dataPagamento) {
-          const dataPagamento = new Date(pagamentoData.dataPagamento);
-          dataPagamento.setHours(0, 0, 0, 0);
+          const dataPagamento = normalizeDate(pagamentoData.dataPagamento);
 
           // Se a data de pagamento for hoje ou no passado, considerar como pago
           if (dataPagamento <= dataAtual) {
-            dataPagamentoEfetiva = pagamentoData.dataPagamento;
+            dataPagamentoEfetiva = dataPagamento;
             status = StatusPagamento.PAGO;
           }
           // Se for futura, deixar como pendente (sem data de pagamento)
@@ -287,14 +303,14 @@ export class CompraService {
         // Se for cartão de crédito com parcelas, criar um pagamento principal
         if (pagamentoData.formaPagamento === FormaPagamento.CARTAO_CREDITO && pagamentoData.quantidadeParcelas && pagamentoData.quantidadeParcelas > 1) {
           const valorParcela = pagamentoData.valor / pagamentoData.quantidadeParcelas;
-          const datasParcelas = this.gerarDatasParcelas(pagamentoData.dataVencimento, pagamentoData.quantidadeParcelas);
+          const datasParcelas = this.gerarDatasParcelas(dataVencimentoNormalizada, pagamentoData.quantidadeParcelas);
           
           // Criar pagamento principal (só para referência)
           const pagamento = manager.create(CompraPagamento, {
             compraId: compraSalva.id,
             formaPagamento: pagamentoData.formaPagamento,
             valor: pagamentoData.valor,
-            dataVencimento: pagamentoData.dataVencimento,
+            dataVencimento: dataVencimentoNormalizada,
             dataPagamento: dataPagamentoEfetiva,
             status,
             observacao: `${pagamentoData.observacao || ''} - ${pagamentoData.quantidadeParcelas}x parcelas`.trim(),
@@ -314,7 +330,7 @@ export class CompraService {
             const lancamento = manager.create(LancamentoFinanceiro, {
               tipoLancamento: TipoLancamento.DEBITO,
               valor: valorParcela,
-              dataLancamento: compraData.dataCompra,
+              dataLancamento: dataCompraNormalizada,
               dataVencimento: dataVencimentoParcela,
               dataPagamento: dataPagamentoParcela,
               formaPagamento: pagamentoData.formaPagamento,
@@ -330,7 +346,7 @@ export class CompraService {
             compraId: compraSalva.id,
             formaPagamento: pagamentoData.formaPagamento,
             valor: pagamentoData.valor,
-            dataVencimento: pagamentoData.dataVencimento,
+            dataVencimento: dataVencimentoNormalizada,
             dataPagamento: dataPagamentoEfetiva,
             status,
             observacao: pagamentoData.observacao,
@@ -343,7 +359,7 @@ export class CompraService {
             tipoLancamento: TipoLancamento.DEBITO,
             valor: pagamentoData.valor,
             dataLancamento: compraData.dataCompra,
-            dataVencimento: pagamentoData.dataVencimento,
+            dataVencimento: dataVencimentoNormalizada,
             dataPagamento: dataPagamentoEfetiva,
             formaPagamento: pagamentoData.formaPagamento,
             compraId: compraSalva.id,

@@ -85,21 +85,28 @@ export class VendaController {
         throw new BadRequestException('Informe ao menos uma forma de pagamento');
       }
 
+      // Função auxiliar para criar data a partir de string YYYY-MM-DD sem problemas de timezone
+      // Cria a data diretamente a partir dos componentes para evitar interpretação como UTC
+      const parseDate = (dateString: string): Date => {
+        if (!dateString || !dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          throw new BadRequestException(`Data inválida: ${dateString}`);
+        }
+        const [year, month, day] = dateString.split('-').map(Number);
+        // Criar data no timezone local (não UTC)
+        const date = new Date(year, month - 1, day);
+        date.setHours(0, 0, 0, 0);
+        return date;
+      };
+
       // Converter datas
-      const dataVenda = new Date(body.dataVenda);
-      if (isNaN(dataVenda.getTime())) {
-        throw new BadRequestException('Data da venda inválida');
-      }
+      const dataVenda = parseDate(body.dataVenda);
 
       const pagamentosProcessados = body.pagamentos.map(p => {
-        const dataVencimento = new Date(p.dataVencimento);
-        if (isNaN(dataVencimento.getTime())) {
-          throw new BadRequestException(`Data de vencimento inválida: ${p.dataVencimento}`);
-        }
+        const dataVencimento = parseDate(p.dataVencimento);
         return {
           ...p,
           dataVencimento,
-          dataPagamento: p.dataPagamento ? new Date(p.dataPagamento) : undefined
+          dataPagamento: p.dataPagamento ? parseDate(p.dataPagamento) : undefined
         };
       });
 

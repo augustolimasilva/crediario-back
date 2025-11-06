@@ -41,7 +41,9 @@ export class VendaService {
 
   private gerarDatasParcelas(dataVencimento: Date, quantidadeParcelas: number): Date[] {
     const datas: Date[] = [];
+    // Garantir que a data base está normalizada (00:00:00 no timezone local)
     const dataBase = new Date(dataVencimento);
+    dataBase.setHours(0, 0, 0, 0);
     
     // Armazenar o dia original para manter consistência
     const diaOriginal = dataBase.getDate();
@@ -63,6 +65,8 @@ export class VendaService {
       // Usar o dia original ou o último dia do mês, o que for menor
       const diaFinal = Math.min(diaOriginal, ultimoDiaDoMes);
       dataParcela.setDate(diaFinal);
+      // Normalizar para 00:00:00 no timezone local
+      dataParcela.setHours(0, 0, 0, 0);
       
       datas.push(dataParcela);
     }
@@ -548,6 +552,10 @@ export class VendaService {
           throw new NotFoundException(`Funcionário vendedor com ID ${vendaData.vendedorId} não encontrado`);
         }
         
+        // Normalizar dataVenda para 00:00:00 no timezone local
+        const dataVendaNormalizada = new Date(vendaData.dataVenda);
+        dataVendaNormalizada.setHours(0, 0, 0, 0);
+
         // Criar venda sem itens (para evitar cascade tentando salvar itens sem valorTotal)
         const venda = manager.create(Venda, { 
           nomeCliente: vendaData.nomeCliente,
@@ -556,7 +564,7 @@ export class VendaService {
           cidade: vendaData.cidade,
           numero: vendaData.numero,
           observacao: vendaData.observacao,
-          dataVenda: vendaData.dataVenda,
+          dataVenda: dataVendaNormalizada,
           valorTotal: valorTotal,
           desconto: desconto,
           vendedorId: vendaData.vendedorId,
@@ -618,7 +626,7 @@ export class VendaService {
             quantidade: itemData.quantidade,
             tipoMovimentacao: TipoMovimentacao.SAIDA,
             valorUnitario: itemData.valorUnitario,
-            dataMovimentacao: vendaData.dataVenda,
+            dataMovimentacao: dataVendaNormalizada,
             usuarioId: vendaData.usuarioId,
             observacao: `Saída via venda` ,
           });
@@ -690,7 +698,7 @@ export class VendaService {
               const lanc = manager.create(LancamentoFinanceiro, {
                 tipoLancamento: TipoLancamento.CREDITO,
                 valor: valorParcela,
-                dataLancamento: vendaData.dataVenda,
+                dataLancamento: dataVendaNormalizada,
                 dataVencimento: dataVencimentoParcela,
                 dataPagamento: dataPagamentoParcela,
                 formaPagamento: pag.formaPagamento,
@@ -744,7 +752,7 @@ export class VendaService {
               const lanc = manager.create(LancamentoFinanceiro, {
                 tipoLancamento: TipoLancamento.CREDITO,
                 valor: pag.valor,
-                dataLancamento: vendaData.dataVenda,
+                dataLancamento: dataVendaNormalizada,
                 dataVencimento: dataVencimentoUnico,
                 dataPagamento: dataPagamentoEfetiva,
                 formaPagamento: pag.formaPagamento,
