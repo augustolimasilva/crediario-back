@@ -477,7 +477,7 @@ export class VendaService {
     rua?: string;
     bairro?: string;
     cidade?: string;
-    numero?: string;
+    numero: string;
     observacao?: string;
     desconto?: number;
     dataVenda: Date;
@@ -795,7 +795,7 @@ export class VendaService {
     rua?: string;
     bairro?: string;
     cidade?: string;
-    numero?: string;
+    numero: string;
     observacao?: string;
     desconto?: number;
     dataVenda: Date;

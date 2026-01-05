@@ -55,7 +55,7 @@ export class VendaController {
     rua?: string;
     bairro?: string;
     cidade?: string;
-    numero?: string;
+    numero: string;
     observacao?: string;
     desconto?: number;
     dataVenda: string;
@@ -68,6 +68,9 @@ export class VendaController {
       // Validar campos obrigatórios
       if (!body.nomeCliente) {
         throw new BadRequestException('Nome do cliente é obrigatório');
+      }
+      if (!body.numero) {
+        throw new BadRequestException('Número da venda é obrigatório');
       }
       if (!body.vendedorId) {
         throw new BadRequestException('Vendedor é obrigatório');
@@ -147,7 +150,7 @@ export class VendaController {
       rua?: string;
       bairro?: string;
       cidade?: string;
-      numero?: string;
+      numero: string;
       observacao?: string;
       desconto?: number;
       dataVenda: string;
@@ -160,6 +163,9 @@ export class VendaController {
     try {
       if (!body.nomeCliente) {
         throw new BadRequestException('Nome do cliente é obrigatório');
+      }
+      if (!body.numero) {
+        throw new BadRequestException('Número da venda é obrigatório');
       }
       if (!body.vendedorId) {
         throw new BadRequestException('Vendedor é obrigatório');

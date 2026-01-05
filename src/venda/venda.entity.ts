@@ -21,8 +21,8 @@ export class Venda {
   @Column({ nullable: true })
   cidade?: string;
 
-  @Column({ nullable: true })
-  numero?: string;
+  @Column()
+  numero: string;
 
   @Column({ type: 'timestamp' })
   dataVenda: Date;
