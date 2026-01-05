@@ -102,7 +102,7 @@ export class VendaService {
     }
 
     if (filters?.numeroVenda) {
-      queryBuilder.andWhere('venda.id::text ILIKE :numeroVenda', {
+      queryBuilder.andWhere('CAST(venda.numero AS TEXT) ILIKE :numeroVenda', {
         numeroVenda: `%${filters.numeroVenda}%`,
       });
     }
