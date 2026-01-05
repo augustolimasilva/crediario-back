@@ -789,6 +789,282 @@ export class VendaService {
       }
     });
   }
+
+  async update(id: string, vendaData: {
+    nomeCliente: string;
+    rua?: string;
+    bairro?: string;
+    cidade?: string;
+    numero?: string;
+    observacao?: string;
+    desconto?: number;
+    dataVenda: Date;
+    vendedorId: string;
+    usuarioId: string;
+    itens: VendaItemInput[];
+    pagamentos: VendaPagamentoInput[];
+  }): Promise<Venda> {
+    return this.dataSource.transaction(async (manager) => {
+      try {
+        // Buscar venda existente
+        const vendaExistente = await manager.findOne(Venda, { 
+          where: { id },
+          relations: ['itens', 'pagamentos']
+        });
+        
+        if (!vendaExistente) {
+          throw new NotFoundException(`Venda com ID ${id} não encontrada`);
+        }
+
+        if (!vendaData.itens || vendaData.itens.length === 0) {
+          throw new BadRequestException('Informe ao menos um item');
+        }
+        if (!vendaData.pagamentos || vendaData.pagamentos.length === 0) {
+          throw new BadRequestException('Informe ao menos uma forma de pagamento');
+        }
+
+        // Calcular valor total dos itens
+        let valorTotalItens = 0;
+        const itensProcessados: Array<{ produtoId: string; quantidade: number; valorUnitario: number; valorTotal: number }> = [];
+        for (const item of vendaData.itens) {
+          const produto = await manager.findOne(Produto, { where: { id: item.produtoId } });
+          if (!produto) throw new NotFoundException(`Produto ${item.produtoId} não encontrado`);
+          
+          const quantidade = Number(item.quantidade);
+          const valorUnitario = Number(item.valorUnitario);
+          const valorTotalItem = quantidade * valorUnitario;
+          
+          valorTotalItens += valorTotalItem;
+          const valorTotalFinal = parseFloat(valorTotalItem.toFixed(2));
+          
+          if (isNaN(valorTotalFinal) || valorTotalFinal <= 0) {
+            throw new BadRequestException(`Valor total inválido para o item ${item.produtoId}`);
+          }
+          
+          itensProcessados.push({ 
+            produtoId: item.produtoId, 
+            quantidade: quantidade, 
+            valorUnitario: valorUnitario, 
+            valorTotal: valorTotalFinal 
+          });
+        }
+
+        const desconto = Number(vendaData.desconto || 0);
+        const valorTotal = Math.max(0, valorTotalItens - desconto);
+
+        // Validar valor dos pagamentos
+        const valorTotalPagamentos = vendaData.pagamentos.reduce((total, pag) => total + Number(pag.valor), 0);
+        if (Math.abs(valorTotalPagamentos - valorTotal) > 0.01) {
+          throw new BadRequestException(
+            `O valor total dos pagamentos (R$ ${valorTotalPagamentos.toFixed(2)}) deve ser igual ao valor total da venda (R$ ${valorTotal.toFixed(2)})`
+          );
+        }
+
+        // Validar usuário e vendedor
+        const usuario = await manager.findOne(User, { where: { id: vendaData.usuarioId } });
+        if (!usuario) {
+          throw new NotFoundException(`Usuário com ID ${vendaData.usuarioId} não encontrado`);
+        }
+
+        const vendedor = await manager.findOne(Funcionario, { where: { id: vendaData.vendedorId } });
+        if (!vendedor) {
+          throw new NotFoundException(`Funcionário vendedor com ID ${vendaData.vendedorId} não encontrado`);
+        }
+        
+        const dataVendaNormalizada = new Date(vendaData.dataVenda);
+        dataVendaNormalizada.setHours(0, 0, 0, 0);
+
+        // Atualizar dados da venda
+        vendaExistente.nomeCliente = vendaData.nomeCliente;
+        vendaExistente.rua = vendaData.rua;
+        vendaExistente.bairro = vendaData.bairro;
+        vendaExistente.cidade = vendaData.cidade;
+        vendaExistente.numero = vendaData.numero;
+        vendaExistente.observacao = vendaData.observacao;
+        vendaExistente.dataVenda = dataVendaNormalizada;
+        vendaExistente.valorTotal = valorTotal;
+        vendaExistente.desconto = desconto;
+        vendaExistente.vendedorId = vendaData.vendedorId;
+        vendaExistente.usuarioId = vendaData.usuarioId;
+        
+        await manager.save(Venda, vendaExistente);
+
+        // Remover itens antigos e criar novos
+        await manager.delete(VendaItem, { vendaId: id });
+        
+        // Reverter estoque dos itens antigos
+        for (const itemAntigo of vendaExistente.itens) {
+          const estoqueReversao = manager.create(Estoque, {
+            produtoId: itemAntigo.produtoId,
+            quantidade: itemAntigo.quantidade,
+            tipoMovimentacao: TipoMovimentacao.ENTRADA,
+            valorUnitario: itemAntigo.valorUnitario,
+            dataMovimentacao: dataVendaNormalizada,
+            usuarioId: vendaData.usuarioId,
+            observacao: `Reversão de estoque - Edição de venda`,
+          });
+          await manager.save(Estoque, estoqueReversao);
+        }
+
+        // Criar novos itens e baixar estoque
+        for (const itemData of itensProcessados) {
+          await manager
+            .createQueryBuilder()
+            .insert()
+            .into(VendaItem)
+            .values({
+              vendaId: id,
+              produtoId: itemData.produtoId,
+              quantidade: itemData.quantidade,
+              valorUnitario: itemData.valorUnitario,
+              valorTotal: itemData.valorTotal,
+            })
+            .execute();
+          
+          // Baixa de estoque (SAIDA)
+          const estoque = manager.create(Estoque, {
+            produtoId: itemData.produtoId,
+            quantidade: itemData.quantidade,
+            tipoMovimentacao: TipoMovimentacao.SAIDA,
+            valorUnitario: itemData.valorUnitario,
+            dataMovimentacao: dataVendaNormalizada,
+            usuarioId: vendaData.usuarioId,
+            observacao: `Saída via venda (editada)`,
+          });
+          await manager.save(Estoque, estoque);
+        }
+
+        // Remover pagamentos e lançamentos financeiros antigos
+        await manager.delete(VendaPagamento, { vendaId: id });
+        await manager.delete(LancamentoFinanceiro, { vendaId: id });
+
+        // Criar novos pagamentos e lançamentos
+        const dataAtual = new Date();
+        dataAtual.setHours(0, 0, 0, 0);
+
+        for (const pag of vendaData.pagamentos) {
+          let dataVencimento: Date;
+          if (pag.dataVencimento instanceof Date) {
+            dataVencimento = new Date(pag.dataVencimento);
+          } else {
+            dataVencimento = new Date(pag.dataVencimento);
+          }
+          dataVencimento.setHours(0, 0, 0, 0);
+          
+          let dataPagamentoEfetiva: Date | undefined = undefined;
+          let status: StatusPagamento = StatusPagamento.PENDENTE;
+
+          if (pag.dataPagamento) {
+            const dataPagamento = new Date(pag.dataPagamento);
+            dataPagamento.setHours(0, 0, 0, 0);
+            if (dataPagamento <= dataAtual) {
+              dataPagamentoEfetiva = dataPagamento;
+              status = StatusPagamento.PAGO;
+            }
+          }
+
+          if (pag.quantidadeParcelas && pag.quantidadeParcelas > 1) {
+            const valorParcela = pag.valor / pag.quantidadeParcelas;
+            const datasParcelas = this.gerarDatasParcelas(dataVencimento, pag.quantidadeParcelas);
+            
+            const observacaoParcela = `${pag.observacao || ''} - ${pag.quantidadeParcelas}x parcelas`.trim();
+            
+            const pagamentoData: any = {
+              vendaId: id,
+              formaPagamento: pag.formaPagamento,
+              valor: pag.valor,
+              dataVencimento: dataVencimento,
+              dataPagamento: dataPagamentoEfetiva,
+              status,
+            };
+            
+            if (observacaoParcela) {
+              pagamentoData.observacao = observacaoParcela;
+            }
+            
+            const pagamento = manager.create(VendaPagamento, pagamentoData);
+            await manager.save(VendaPagamento, pagamento);
+
+            for (let i = 0; i < pag.quantidadeParcelas; i++) {
+              const dataVencimentoParcela = datasParcelas[i];
+              let dataPagamentoParcela: Date | undefined = undefined;
+              if (i === 0 && dataPagamentoEfetiva) {
+                dataPagamentoParcela = dataPagamentoEfetiva;
+              }
+              
+              const lanc = manager.create(LancamentoFinanceiro, {
+                tipoLancamento: TipoLancamento.CREDITO,
+                valor: valorParcela,
+                dataLancamento: dataVendaNormalizada,
+                dataVencimento: dataVencimentoParcela,
+                dataPagamento: dataPagamentoParcela,
+                formaPagamento: pag.formaPagamento,
+                vendaId: id,
+                usuarioId: vendaData.usuarioId,
+                observacao: `Venda - ${vendaData.nomeCliente} - ${pag.formaPagamento} - Parcela ${i + 1}/${pag.quantidadeParcelas}`,
+              });
+              await manager.save(LancamentoFinanceiro, lanc);
+            }
+          } else {
+            const pagamentoData: any = {
+              vendaId: id,
+              formaPagamento: pag.formaPagamento,
+              valor: pag.valor,
+              dataVencimento: pag.dataVencimento,
+              dataPagamento: dataPagamentoEfetiva,
+              status,
+            };
+            
+            if (pag.observacao) {
+              pagamentoData.observacao = pag.observacao;
+            }
+            
+            const pagamento = manager.create(VendaPagamento, pagamentoData);
+            await manager.save(VendaPagamento, pagamento);
+
+            let dataVencimentoUnico: Date;
+            if (pag.dataVencimento instanceof Date) {
+              dataVencimentoUnico = new Date(pag.dataVencimento);
+            } else {
+              dataVencimentoUnico = new Date(pag.dataVencimento);
+            }
+            dataVencimentoUnico.setHours(0, 0, 0, 0);
+            
+            const lanc = manager.create(LancamentoFinanceiro, {
+              tipoLancamento: TipoLancamento.CREDITO,
+              valor: pag.valor,
+              dataLancamento: dataVendaNormalizada,
+              dataVencimento: dataVencimentoUnico,
+              dataPagamento: dataPagamentoEfetiva,
+              formaPagamento: pag.formaPagamento,
+              vendaId: id,
+              usuarioId: vendaData.usuarioId,
+              observacao: `Venda - ${vendaData.nomeCliente} - ${pag.formaPagamento}`,
+            });
+            await manager.save(LancamentoFinanceiro, lanc);
+          }
+        }
+
+        const vendaAtualizada = await manager.findOne(Venda, { 
+          where: { id }, 
+          relations: ['itens', 'itens.produto', 'vendedor', 'usuario', 'pagamentos'] 
+        });
+        
+        if (!vendaAtualizada) {
+          throw new Error('Erro ao buscar venda atualizada');
+        }
+        
+        return vendaAtualizada;
+      } catch (error) {
+        console.error('========== ERRO AO ATUALIZAR VENDA ==========');
+        console.error('Erro:', error);
+        console.error('Mensagem:', error?.message);
+        console.error('Stack:', error?.stack);
+        console.error('=============================================');
+        throw error;
+      }
+    });
+  }
 }
 
 

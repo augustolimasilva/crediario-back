@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, Param, ParseUUIDPipe, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, Query, Param, ParseUUIDPipe, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import { VendaService } from './venda.service';
 import { FormaPagamento } from '../compra/compra-pagamento.entity';
 
@@ -125,6 +125,92 @@ export class VendaController {
       
       // Se não for, converte para HttpException com mensagem detalhada
       const errorMessage = error?.message || 'Erro interno ao processar venda';
+      const statusCode = error?.status || HttpStatus.INTERNAL_SERVER_ERROR;
+      
+      throw new HttpException(
+        {
+          statusCode,
+          message: errorMessage,
+          error: error?.name || 'Internal Server Error',
+          details: process.env.NODE_ENV === 'development' ? error?.stack : undefined,
+        },
+        statusCode,
+      );
+    }
+  }
+
+  @Put(':id')
+  async update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: {
+      nomeCliente: string;
+      rua?: string;
+      bairro?: string;
+      cidade?: string;
+      numero?: string;
+      observacao?: string;
+      desconto?: number;
+      dataVenda: string;
+      vendedorId: string;
+      usuarioId: string;
+      itens: Array<{ produtoId: string; quantidade: number; valorUnitario: number }>;
+      pagamentos: Array<{ formaPagamento: FormaPagamento; valor: number; dataVencimento: string; dataPagamento?: string; quantidadeParcelas?: number; observacao?: string }>;
+    }
+  ) {
+    try {
+      if (!body.nomeCliente) {
+        throw new BadRequestException('Nome do cliente é obrigatório');
+      }
+      if (!body.vendedorId) {
+        throw new BadRequestException('Vendedor é obrigatório');
+      }
+      if (!body.usuarioId) {
+        throw new BadRequestException('Usuário é obrigatório');
+      }
+      if (!body.dataVenda) {
+        throw new BadRequestException('Data da venda é obrigatória');
+      }
+      if (!body.itens || body.itens.length === 0) {
+        throw new BadRequestException('Informe ao menos um item');
+      }
+      if (!body.pagamentos || body.pagamentos.length === 0) {
+        throw new BadRequestException('Informe ao menos uma forma de pagamento');
+      }
+
+      const parseDate = (dateString: string): Date => {
+        if (!dateString || !dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          throw new BadRequestException(`Data inválida: ${dateString}`);
+        }
+        const [year, month, day] = dateString.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
+        date.setHours(0, 0, 0, 0);
+        return date;
+      };
+
+      const dataVenda = parseDate(body.dataVenda);
+
+      const pagamentosProcessados = body.pagamentos.map(p => {
+        const dataVencimento = parseDate(p.dataVencimento);
+        return {
+          ...p,
+          dataVencimento,
+          dataPagamento: p.dataPagamento ? parseDate(p.dataPagamento) : undefined
+        };
+      });
+
+      return await this.vendaService.update(id, {
+        ...body,
+        desconto: body.desconto || 0,
+        dataVenda,
+        itens: body.itens,
+        pagamentos: pagamentosProcessados,
+      });
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      const errorMessage = error?.message || 'Erro interno ao processar atualização da venda';
       const statusCode = error?.status || HttpStatus.INTERNAL_SERVER_ERROR;
       
       throw new HttpException(
